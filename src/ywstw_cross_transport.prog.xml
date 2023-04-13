@@ -40,19 +40,7 @@
      <ID>I</ID>
      <KEY>B01</KEY>
      <ENTRY>Up-/Download von Transport-Dateien</ENTRY>
-     <LENGTH>60</LENGTH>
-    </item>
-    <item>
-     <ID>I</ID>
-     <KEY>B02</KEY>
-     <ENTRY>Upload-Optionen</ENTRY>
-     <LENGTH>60</LENGTH>
-    </item>
-    <item>
-     <ID>I</ID>
-     <KEY>B11</KEY>
-     <ENTRY>Transportauswahl</ENTRY>
-     <LENGTH>60</LENGTH>
+     <LENGTH>34</LENGTH>
     </item>
     <item>
      <ID>R</ID>

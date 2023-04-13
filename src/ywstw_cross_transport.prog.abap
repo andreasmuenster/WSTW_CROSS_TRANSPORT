@@ -22,7 +22,6 @@ SELECTION-SCREEN BEGIN OF BLOCK b01 WITH FRAME TITLE TEXT-b01.
 
   PARAMETERS: p_downl RADIOBUTTON GROUP rb01 DEFAULT 'X' ##needed.
 
-  POSITION 12.
   PARAMETERS: p_trq   TYPE e070-trkorr MATCHCODE OBJECT fpm_shlp_trkorr.
 
   SELECTION-SCREEN ULINE.
@@ -533,9 +532,9 @@ CLASS lcl_main IMPLEMENTATION.
       TRANSFER datafile_xstring TO datafile_name_full.
       CLOSE DATASET datafile_name_full.
 
-      WRITE: 'Cofile created: '(003), cofile_name_full ##no_text.
+      WRITE: / 'Cofile created: '(003), cofile_name_full ##no_text.
       WRITE: / 'Datafile created: '(004), datafile_name_full ##no_text.
-      WRITE: / |Use TX STMS / STMS_IMPORT to add to buffer ... { cofile_name+8(3) }{ cofile_name(7) }|.
+      WRITE: / |Use TX STMS / STMS_IMPORT to add to buffer ... { cofile_name+8(3) }{ cofile_name(7) }| ##no_text.
       ULINE.
 
     ENDLOOP.
