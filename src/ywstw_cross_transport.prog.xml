@@ -26,8 +26,20 @@
     </item>
     <item>
      <ID>I</ID>
+     <KEY>003</KEY>
+     <ENTRY>Cofile created:</ENTRY>
+     <LENGTH>25</LENGTH>
+    </item>
+    <item>
+     <ID>I</ID>
+     <KEY>004</KEY>
+     <ENTRY>Datafile created:</ENTRY>
+     <LENGTH>27</LENGTH>
+    </item>
+    <item>
+     <ID>I</ID>
      <KEY>B01</KEY>
-     <ENTRY>Steuerung des Import / Exports</ENTRY>
+     <ENTRY>Up-/Download von Transport-Dateien</ENTRY>
      <LENGTH>60</LENGTH>
     </item>
     <item>
@@ -56,7 +68,7 @@
     <item>
      <ID>S</ID>
      <KEY>P_OVER</KEY>
-     <ENTRY>Überschreiben ALLER Zieldaten</ENTRY>
+     <ENTRY>Überschreiben d. Zieldateien!</ENTRY>
      <LENGTH>37</LENGTH>
     </item>
     <item>

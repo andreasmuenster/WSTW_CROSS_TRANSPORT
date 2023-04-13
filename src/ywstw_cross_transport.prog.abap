@@ -1,11 +1,16 @@
 *&---------------------------------------------------------------------*
-*& Report /wstw/cross_transport
+*& Report ywstw_cross_transport
 *&---------------------------------------------------------------------*
+*&!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+*&  MASTER SYSTEM für den REPORT = S4D !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+*&!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 *& Cross-Transport für Transporte
 *&   - die Transporte müssen schon freigegeben sein
 *&   - die Transporte (Co-+Data-File) werden in ein ZIP-File auf den
 *&     Client exportiert
 *&   - im Zielsystem kann das ZIP-File für den Import verwendet werden
+*&   - danach muss in der STMS der Transport in die Import-Queue
+*&     gestellt werden
 *&---------------------------------------------------------------------*
 REPORT ywstw_cross_transport.
 
@@ -14,25 +19,83 @@ REPORT ywstw_cross_transport.
 "-----------------------------------------------------------------------------------------
 
 SELECTION-SCREEN BEGIN OF BLOCK b01 WITH FRAME TITLE TEXT-b01.
-  PARAMETERS: p_downl RADIOBUTTON GROUP rb01 DEFAULT 'X'.
 
-  SELECTION-SCREEN BEGIN OF BLOCK b11 WITH FRAME TITLE TEXT-b11.
-    PARAMETERS: p_trq   TYPE e070-trkorr DEFAULT 'S4DK900269'.
-  SELECTION-SCREEN END OF BLOCK b11.
+  PARAMETERS: p_downl RADIOBUTTON GROUP rb01 DEFAULT 'X' ##needed.
 
-  SELECTION-SCREEN SKIP 1.
+  POSITION 12.
+  PARAMETERS: p_trq   TYPE e070-trkorr MATCHCODE OBJECT fpm_shlp_trkorr.
+
+  SELECTION-SCREEN ULINE.
 
   PARAMETERS: p_upl   RADIOBUTTON GROUP rb01.
-  SELECTION-SCREEN BEGIN OF BLOCK b02 WITH FRAME TITLE TEXT-b02.
-    PARAMETERS: p_over AS CHECKBOX DEFAULT space.
-  SELECTION-SCREEN END OF BLOCK b02.
+  PARAMETERS: p_over AS CHECKBOX DEFAULT space.
+
 SELECTION-SCREEN END OF BLOCK b01.
+
+"-----------------------------------------------------------------------------------------
+" CLASS LCX_MAIN
+"-----------------------------------------------------------------------------------------
+
+CLASS lcx_generic DEFINITION INHERITING FROM cx_static_check FINAL CREATE PUBLIC.
+  PUBLIC SECTION.
+    INTERFACES if_t100_message.
+
+    METHODS constructor
+      IMPORTING i_msg TYPE string.
+
+    DATA: msg      TYPE string READ-ONLY ##NEEDED.
+
+ENDCLASS.
+
+CLASS lcx_generic IMPLEMENTATION.
+
+  METHOD constructor.
+
+    TYPES: BEGIN OF ty_message,
+             msgv1 TYPE sy-msgv1,
+             msgv2 TYPE sy-msgv2,
+             msgv3 TYPE sy-msgv3,
+             msgv4 TYPE sy-msgv4,
+           END OF ty_message.
+    DATA: message   TYPE ty_message,
+          callstack TYPE abap_callstack.
+
+    super->constructor( ).
+
+    me->msg = i_msg.
+
+    "Default message type
+    me->if_t100_message~t100key-msgid = 'SY'.
+    me->if_t100_message~t100key-msgno = '499'.
+
+    CALL FUNCTION 'SYSTEM_CALLSTACK'
+      EXPORTING
+        max_level = 2
+      IMPORTING
+        callstack = callstack.
+
+    TRY.
+        DATA(line_of_code) = CONV string( callstack[ 2 ]-line ).
+      CATCH cx_sy_itab_line_not_found.
+        line_of_code = '??'.
+    ENDTRY.
+
+
+    message = CONV #( |{ i_msg } (Line: { line_of_code }).| ) ##operator[ty_message].
+    me->if_t100_message~t100key-attr1 = message-msgv1.
+    me->if_t100_message~t100key-attr2 = message-msgv2.
+    me->if_t100_message~t100key-attr3 = message-msgv3.
+    me->if_t100_message~t100key-attr4 = message-msgv4.
+
+  ENDMETHOD.
+
+ENDCLASS.
 
 "-----------------------------------------------------------------------------------------
 " CLASS LCL_MAIN
 "-----------------------------------------------------------------------------------------
 
-CLASS lcl_main DEFINITION.
+CLASS lcl_main DEFINITION FINAL CREATE PRIVATE.
 
   PUBLIC SECTION.
 
@@ -48,24 +111,23 @@ CLASS lcl_main DEFINITION.
 
   PRIVATE SECTION.
     CONSTANTS: c_dir_trans     TYPE spfl_parameter_name VALUE 'DIR_TRANS',
-               c_dir_separator TYPE spfl_parameter_name VALUE 'DIR_SEP',
-               c_dir_home      TYPE spfl_parameter_name VALUE 'DIR_HOME'.
+               c_dir_separator TYPE spfl_parameter_name VALUE 'DIR_SEP'.
 
     DATA: profile_dir_trans          TYPE spfl_parameter_value,
-          profile_dir_separator_char TYPE spfl_parameter_value,
-          profile_dir_home           TYPE spfl_parameter_value.
+          profile_dir_separator_char TYPE spfl_parameter_value.
 
     CLASS-DATA:
       static_instance TYPE REF TO lcl_main.
 
     METHODS download_data
       IMPORTING
-        i_request_id TYPE e070-trkorr.
+                i_request_id TYPE e070-trkorr
+      RAISING   lcx_generic.
 
     METHODS upload_data
       IMPORTING
-        i_request_id      TYPE e070-trkorr
-        i_force_overwrite TYPE xfeld.
+                i_force_overwrite TYPE xfeld
+      RAISING   lcx_generic.
 
     METHODS create_file_names_from_request
       IMPORTING
@@ -73,11 +135,20 @@ CLASS lcl_main DEFINITION.
       EXPORTING
         e_cofile_name   TYPE string
         e_datafile_name TYPE string.
+
     METHODS file_exists
       IMPORTING
         i_file_name_full     TYPE string
       RETURNING
         VALUE(r_file_exists) TYPE abap_bool.
+
+    METHODS get_binary_file
+      IMPORTING
+        i_filename       TYPE string
+      RETURNING
+        VALUE(r_xstring) TYPE xstring
+      RAISING
+        lcx_generic.
 
 ENDCLASS.
 
@@ -113,19 +184,6 @@ CLASS lcl_main IMPLEMENTATION.
       FREE profile_dir_separator_char.
     ENDIF.
 
-    cl_spfl_profile_parameter=>get_value(
-      EXPORTING
-        name  = c_dir_home
-      IMPORTING
-        value = profile_dir_home
-      RECEIVING
-        rc    = rc_spfl
-    ).
-
-    IF rc_spfl <> 0.
-      FREE profile_dir_home.
-    ENDIF.
-
   ENDMETHOD.
 
   METHOD get_instance.
@@ -135,32 +193,38 @@ CLASS lcl_main IMPLEMENTATION.
 
   METHOD run.
 
-    " formal check i_request_id ---------------------------------------------------
+    TRY.
+        IF i_mode_upload = abap_true.
+          upload_data( i_force_overwrite = i_force_overwrite ).
+        ELSE.
+          IF strlen( CONV string( i_request_id ) ) <> 10 OR i_request_id+3(1) <> 'K'.
+            RAISE EXCEPTION TYPE lcx_generic
+              EXPORTING
+                i_msg = |Transport '{ i_request_id }' has no valid syntax.| ##no_text.
+          ENDIF.
 
-    IF strlen( CONV string( i_request_id ) ) <> 10 OR i_request_id+3(1) <> 'K'.
-      "##todo - Illegal TRQNAME
-      RETURN.
-    ENDIF.
+          download_data( i_request_id = i_request_id ).
+        ENDIF.
 
-    " get / check Transport -------------------------------------------------------
-
-    IF i_mode_upload = abap_true.
-      upload_data( i_request_id      = i_request_id
-                   i_force_overwrite = i_force_overwrite ).
-    ELSE.
-      download_data( i_request_id = i_request_id ).
-    ENDIF.
+      CATCH lcx_generic INTO DATA(generic_exception).
+        MESSAGE ID generic_exception->if_t100_message~t100key-msgid
+                TYPE 'S'
+                NUMBER generic_exception->if_t100_message~t100key-msgno
+                WITH generic_exception->if_t100_message~t100key-attr1
+                     generic_exception->if_t100_message~t100key-attr2
+                     generic_exception->if_t100_message~t100key-attr3
+                     generic_exception->if_t100_message~t100key-attr4
+                DISPLAY LIKE 'E'.
+    ENDTRY.
 
   ENDMETHOD.
 
   METHOD download_data.
 
-    DATA: cofile_name      TYPE string,
-          datafile_name    TYPE string,
-          cofile_xstring   TYPE xstring,
-          datafile_xstring TYPE xstring,
-          path             TYPE string,
-          fullpath         TYPE string.
+    DATA: cofile_name   TYPE string,
+          datafile_name TYPE string,
+          path          TYPE string,
+          fullpath      TYPE string.
 
     TRY.
         DATA(transport_entity) = cl_cts_transport_factory=>get_transport_entity(
@@ -168,8 +232,9 @@ CLASS lcl_main IMPLEMENTATION.
             id = i_request_id
         ).
         IF transport_entity->get_status( ) <> if_cts_transport_request=>co_status_released.
-          "##todo - not released
-          RETURN.
+          RAISE EXCEPTION TYPE lcx_generic
+            EXPORTING
+              i_msg = |Transport { i_request_id } not released.| ##no_text.
         ENDIF.
 
         DATA(transport_request) = CAST if_cts_transport_request( transport_entity ).
@@ -178,8 +243,9 @@ CLASS lcl_main IMPLEMENTATION.
         IF     transport_type <> if_cts_transport_request=>co_req_type_copy
            AND transport_type <> if_cts_transport_request=>co_req_type_customizing
            AND transport_type <> if_cts_transport_request=>co_req_type_workbench.
-          "##todo - not valid type
-          RETURN.
+          RAISE EXCEPTION TYPE lcx_generic
+            EXPORTING
+              i_msg = |Transport { i_request_id } is not of valid type.| ##no_text.
         ENDIF.
 
         transport_request->get_header_data(
@@ -188,55 +254,32 @@ CLASS lcl_main IMPLEMENTATION.
         ).
 
       CATCH cx_cts_transport_entity.
-        "##todo EXCEPTION HANDLING
-        RETURN.
+        RAISE EXCEPTION TYPE lcx_generic
+          EXPORTING
+            i_msg = |Error identifying Transport { i_request_id }.| ##no_text.
     ENDTRY.
 
-    create_file_names_from_request( EXPORTING i_request_id    = i_request_id
+    create_file_names_from_request( EXPORTING i_request_id    = transport_header-trkorr
                                     IMPORTING e_cofile_name   = cofile_name
                                               e_datafile_name = datafile_name ).
 
-    DATA(cofile_name_full) = |{ profile_dir_trans }{ profile_dir_separator_char }cofiles{ profile_dir_separator_char }{ cofile_name }|.
-    DATA(datafile_name_full) = |{ profile_dir_trans }{ profile_dir_separator_char }data{ profile_dir_separator_char }{ datafile_name }|.
-
-    OPEN DATASET cofile_name_full FOR INPUT IN BINARY MODE.
-    IF sy-subrc <> 0.
-      "##todo exception handling
-      RETURN.
-    ENDIF.
-    READ DATASET cofile_name_full INTO cofile_xstring.
-    IF sy-subrc <> 0.
-      "##todo exception handling
-      RETURN.
-    ENDIF.
-    CLOSE DATASET cofile_name_full.
-
-    OPEN DATASET datafile_name_full FOR INPUT IN BINARY MODE.
-    IF sy-subrc <> 0.
-      "##todo exception handling
-      RETURN.
-    ENDIF.
-    READ DATASET datafile_name_full INTO datafile_xstring.
-    IF sy-subrc <> 0.
-      "##todo exception handling
-      RETURN.
-    ENDIF.
-    CLOSE DATASET datafile_name_full.
-
     DATA(zip_handler) = NEW cl_abap_zip( ).
+
     zip_handler->add(
       EXPORTING
         name    = datafile_name
-        content = datafile_xstring
+        content = get_binary_file( |{ profile_dir_trans }{ profile_dir_separator_char }data{ profile_dir_separator_char }{ datafile_name }| ) ##no_text
     ).
+
     zip_handler->add(
       EXPORTING
         name    = cofile_name
-        content = cofile_xstring
+        content = get_binary_file( |{ profile_dir_trans }{ profile_dir_separator_char }cofiles{ profile_dir_separator_char }{ cofile_name }| ) ##no_text
     ).
 
     DATA(zip_xstring) = zip_handler->save( ).
-    DATA(filename) = |{ i_request_id }.ZIP|.
+
+    DATA(filename) = |{ i_request_id }.ZIP| ##no_text.
 
     "get target
     cl_gui_frontend_services=>file_save_dialog(
@@ -255,8 +298,9 @@ CLASS lcl_main IMPLEMENTATION.
     ).
 
     IF sy-subrc <> 0.
-      "##todo handling
-      RETURN.
+      RAISE EXCEPTION TYPE lcx_generic
+        EXPORTING
+          i_msg = 'File save aborted.' ##no_text.
     ENDIF.
 
     DATA(zip_raw_data) = cl_bcs_convert=>xstring_to_solix( EXPORTING iv_xstring = zip_xstring ).
@@ -266,6 +310,8 @@ CLASS lcl_main IMPLEMENTATION.
         bin_filesize            = xstrlen( zip_xstring )
         filename                = fullpath
         filetype                = 'BIN' ##no_text
+      IMPORTING
+        filelength              = DATA(filelength)
       CHANGING
         data_tab                = zip_raw_data
       EXCEPTIONS
@@ -293,10 +339,31 @@ CLASS lcl_main IMPLEMENTATION.
         not_supported_by_gui    = 22
         error_no_gui            = 23
     ).
-    IF sy-subrc <> 0.
-      "##todo handling
-      RETURN.
+
+    IF sy-subrc <> 0 OR filelength = 0.
+      RAISE EXCEPTION TYPE lcx_generic
+        EXPORTING
+          i_msg = |Cannot download file RC = { sy-subrc }.| ##no_text.
     ENDIF.
+
+  ENDMETHOD.
+
+  METHOD get_binary_file.
+
+    OPEN DATASET i_filename FOR INPUT IN BINARY MODE.
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE lcx_generic
+        EXPORTING
+          i_msg = |Can't open { i_filename } for reading.| ##no_text.
+    ENDIF.
+
+    READ DATASET i_filename INTO r_xstring.
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE lcx_generic
+        EXPORTING
+          i_msg = |Can't read { i_filename } properly.| ##no_text.
+    ENDIF.
+    CLOSE DATASET i_filename.
 
   ENDMETHOD.
 
@@ -304,7 +371,6 @@ CLASS lcl_main IMPLEMENTATION.
   METHOD upload_data.
 
     DATA: filelength       TYPE i,
-          header           TYPE xstring,
           zip_raw_data     TYPE solix_tab,
           file_table       TYPE filetable,
           rc               TYPE i,
@@ -313,15 +379,11 @@ CLASS lcl_main IMPLEMENTATION.
           cofile_xstring   TYPE xstring,
           datafile_xstring TYPE xstring.
 
-    create_file_names_from_request( EXPORTING i_request_id    = i_request_id
-                                    IMPORTING e_cofile_name   = cofile_name
-                                              e_datafile_name = datafile_name ).
-
     cl_gui_frontend_services=>file_open_dialog(
       EXPORTING
         window_title            = CONV #( 'Upload Transport-ZIP-File'(002) )
         default_extension       = 'zip'
-        default_filename        = |{  i_request_id }.zip|
+        default_filename        = '*.zip' ##no_text
         multiselection          = abap_false
       CHANGING
         file_table              = file_table
@@ -333,8 +395,9 @@ CLASS lcl_main IMPLEMENTATION.
         not_supported_by_gui    = 4
     ).
     IF sy-subrc <> 0 OR file_table IS INITIAL.
-      "##todo exception handling
-      RETURN.
+      RAISE EXCEPTION TYPE lcx_generic
+        EXPORTING
+          i_msg = 'File empty or upload aborted.' ##no_text.
     ENDIF.
 
     cl_gui_frontend_services=>gui_upload(
@@ -343,7 +406,6 @@ CLASS lcl_main IMPLEMENTATION.
         filetype                = 'BIN'
       IMPORTING
         filelength              = filelength
-        header                  = header
       CHANGING
         data_tab                = zip_raw_data
       EXCEPTIONS
@@ -367,14 +429,16 @@ CLASS lcl_main IMPLEMENTATION.
         error_no_gui            = 18
     ).
     IF sy-subrc <> 0.
-      "##todo exception handling
-      RETURN.
+      RAISE EXCEPTION TYPE lcx_generic
+        EXPORTING
+          i_msg = |Error uploading file RC={ sy-subrc }.| ##no_text.
     ENDIF.
 
     DATA(zip_xstring) = cl_bcs_convert=>solix_to_xstring( it_solix = zip_raw_data[]
                                                           iv_size  = filelength ).
 
     DATA(zip_handler) = NEW cl_abap_zip( ).
+
     zip_handler->load(
       EXPORTING
         zip             = zip_xstring
@@ -382,20 +446,21 @@ CLASS lcl_main IMPLEMENTATION.
       EXCEPTIONS
         zip_parse_error = 1
     ).
+
     IF sy-subrc <> 0.
-      "##todo exception handling
-      RETURN.
+      RAISE EXCEPTION TYPE lcx_generic
+        EXPORTING
+          i_msg = |Error handling ZIP RC={ sy-subrc }.| ##no_text.
     ENDIF.
 
     LOOP AT zip_handler->files REFERENCE INTO DATA(single_file).
 
       IF single_file->name(1) = 'K'.
-        DATA(data_file_name) = |R{ single_file->name+1 }|.
+        datafile_name = |R{ single_file->name+1 }|.
       ELSE.
         CONTINUE.
       ENDIF.
 
-      WRITE: single_file->name, single_file->size.
       zip_handler->get(
         EXPORTING
           name                    = single_file->name
@@ -406,14 +471,18 @@ CLASS lcl_main IMPLEMENTATION.
           zip_index_error         = 1
           zip_decompression_error = 2
       ).
+
       IF sy-subrc <> 0.
-        "##todo exception handling
-        RETURN.
+        RAISE EXCEPTION TYPE lcx_generic
+          EXPORTING
+            i_msg = |Error unzipping cofile { single_file->name } RC={ sy-subrc }.| ##no_text.
       ENDIF.
+
+      cofile_name = single_file->name.
 
       zip_handler->get(
         EXPORTING
-          name                    = data_file_name
+          name                    = datafile_name
           index                   = 0
         IMPORTING
           content                 = datafile_xstring
@@ -422,28 +491,32 @@ CLASS lcl_main IMPLEMENTATION.
           zip_decompression_error = 2
       ).
       IF sy-subrc <> 0.
-        "##todo exception handling
-        RETURN.
+        RAISE EXCEPTION TYPE lcx_generic
+          EXPORTING
+            i_msg = |Error unzipping datafile { datafile_name } RC={ sy-subrc }.| ##no_text.
       ENDIF.
 
-      IF cofile_xstring IS INITIAL OR datafile_xstring IS INITIAL.
-        "##todo exception handling
-        RETURN.
+      IF cofile_xstring IS INITIAL OR datafile_xstring IS INITIAL OR cofile_name IS INITIAL OR datafile_name IS INITIAL.
+        RAISE EXCEPTION TYPE lcx_generic
+          EXPORTING
+            i_msg = |Error handling datafile or cofile { datafile_name } { cofile_name } RC={ sy-subrc }.| ##no_text.
       ENDIF.
 
-      DATA(cofile_name_full) = |{  profile_dir_home }{ profile_dir_separator_char }{ cofile_name }|.
-      DATA(datafile_name_full) = |{  profile_dir_home }{ profile_dir_separator_char }{ datafile_name }|.
+      DATA(cofile_name_full) = |{  profile_dir_trans }{ profile_dir_separator_char }cofiles{ profile_dir_separator_char }{ cofile_name }| ##no_text.
+      DATA(datafile_name_full) = |{  profile_dir_trans }{ profile_dir_separator_char }data{ profile_dir_separator_char }{ datafile_name }| ##no_text.
 
-      IF file_exists( i_file_name_full = cofile_name_full ) = abap_true OR
-         file_exists( i_file_name_full = datafile_name_full ).
-        "#todo no overwrite!
-        CONTINUE.
+      IF i_force_overwrite = abap_false AND ( file_exists( i_file_name_full = cofile_name_full ) = abap_true OR
+                                              file_exists( i_file_name_full = datafile_name_full ) ).
+        RAISE EXCEPTION TYPE lcx_generic
+          EXPORTING
+            i_msg = |Aborted, i wont overwrite neither datfile nor cofile { cofile_name },{ datafile_name }.| ##no_text.
       ENDIF.
 
       OPEN DATASET cofile_name_full FOR OUTPUT IN BINARY MODE.
       IF sy-subrc <> 0.
-        "#todo error handling
-        CONTINUE.
+        RAISE EXCEPTION TYPE lcx_generic
+          EXPORTING
+            i_msg = |Error writing to { cofile_name_full }.| ##no_text.
       ENDIF.
       TRANSFER cofile_xstring TO cofile_name_full.
       CLOSE DATASET cofile_name_full.
@@ -453,12 +526,15 @@ CLASS lcl_main IMPLEMENTATION.
         "clear cofile for consistency
         DELETE DATASET cofile_name_full.
         "#todo error handling
-        CONTINUE.
+        RAISE EXCEPTION TYPE lcx_generic
+          EXPORTING
+            i_msg = |Error writing to { datafile_name_full }.| ##no_text.
       ENDIF.
       TRANSFER datafile_xstring TO datafile_name_full.
       CLOSE DATASET datafile_name_full.
 
-      WRITE: cofile_name_full, / datafile_name_full.
+      WRITE: / 'Cofile created: '(003), cofile_name_full ##no_text.
+      WRITE: / 'Datafile created: '(004), datafile_name_full ##no_text.
 
     ENDLOOP.
 
@@ -476,7 +552,6 @@ CLASS lcl_main IMPLEMENTATION.
 
   ENDMETHOD.
 
-
   METHOD file_exists.
 
     OPEN DATASET i_file_name_full FOR INPUT IN BINARY MODE.
@@ -491,9 +566,17 @@ CLASS lcl_main IMPLEMENTATION.
 
 ENDCLASS.
 
-"-----------------------------------------------------------------------------------------
-" START-OF-SELECTION
-"-----------------------------------------------------------------------------------------
+*-----------------------------------------------------------------------------------------
+* INITIALIZATION
+*-----------------------------------------------------------------------------------------
+
+INITIALIZATION.
+
+  p_trq = |{ sy-sysid }K......| ##no_text.
+
+*-----------------------------------------------------------------------------------------
+* start-of-selection
+*-----------------------------------------------------------------------------------------
 
 START-OF-SELECTION.
 
