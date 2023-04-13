@@ -533,8 +533,10 @@ CLASS lcl_main IMPLEMENTATION.
       TRANSFER datafile_xstring TO datafile_name_full.
       CLOSE DATASET datafile_name_full.
 
-      WRITE: / 'Cofile created: '(003), cofile_name_full ##no_text.
+      WRITE: 'Cofile created: '(003), cofile_name_full ##no_text.
       WRITE: / 'Datafile created: '(004), datafile_name_full ##no_text.
+      WRITE: / |Use TX STMS / STMS_IMPORT to add to buffer ... { cofile_name+8(3) }{ cofile_name(7) }|.
+      ULINE.
 
     ENDLOOP.
 
