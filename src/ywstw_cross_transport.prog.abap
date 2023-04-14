@@ -441,7 +441,7 @@ CLASS lcl_main IMPLEMENTATION.
     zip_handler->load(
       EXPORTING
         zip             = zip_xstring
-        check_header    = abap_true
+*        check_header    = abap_true
       EXCEPTIONS
         zip_parse_error = 1
     ).
